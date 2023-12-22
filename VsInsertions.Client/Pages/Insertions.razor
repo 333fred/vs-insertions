@@ -6,6 +6,8 @@
 @rendermode RenderMode.InteractiveServer
 @inject IJSRuntime JSRuntime
 
+<RepoStatus VsCookie="@cookie" />
+
 <PageTitle>Insertions</PageTitle>
 
 <h1>Insertions</h1>
@@ -90,7 +92,7 @@ else
                 <a href="@insertion.Url" title="@insertion.Title">@insertion.BuildNumber</a>
 
                 <button class="btn btn-outline-secondary btn-sm" @onclick="() => insertion.DisplayJson = !insertion.DisplayJson">JSON</button>
-                <button class="btn btn-outline-danger btn-sm" @onclick="insertion.AbandonAsync" disabled="@(insertion.Status != PullRequestStatus.Active)">Abandon</button>
+                <button class="btn btn-outline-danger btn-sm" @onclick="@(() => insertion.AbandonAsync(client))" disabled="@(insertion.Status != PullRequestStatus.Active)">Abandon</button>
 
                 @if (insertion.Abandoning)
                 {
@@ -112,7 +114,7 @@ else
                     @(" ")
                 }
 
-                <button class="btn btn-outline-secondary btn-sm" @onclick="insertion.RefreshRpsSummary">Refresh RPS</button>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => insertion.RefreshRpsSummary(client))">Refresh RPS</button>
 
                 @if (insertion.DisplayJson)
                 {
@@ -204,7 +206,7 @@ else
             }
 
             errorHtml = null;
-            var moreInsertions = node!["value"]!.AsArray().Select(x => new VsInsertion(this, x!));
+            var moreInsertions = node!["value"]!.AsArray().Select(x => new VsInsertion(x!));
 
             if (insertions == null)
             {
@@ -231,7 +233,7 @@ else
                 if (insertion.RpsSummary is null)
                 {
                     count++;
-                    insertion.RefreshRpsSummary();
+                    insertion.RefreshRpsSummary(client);
                 }
 
                 if (count >= numberOfRecentRpsToLoad)
@@ -242,126 +244,6 @@ else
         }
     }
 
-    class VsInsertion(Insertions page, JsonNode node)
-    {
-        private Match? parsedTitle;
-
-        public bool DisplayJson { get; set; }
-        public bool Abandoning { get; private set; }
-
-        public string PullRequestId => node["pullRequestId"]!.ToString();
-        public string Url => $"https://dev.azure.com/devdiv/DevDiv/_git/VS/pullrequest/{PullRequestId}";
-        public string Title => node["title"]!.ToString();
-        public Match ParsedTitle => (parsedTitle ??= Regex.Match(Title, @"(?<repo>\w+) '(?<source>[^']+)/(?<build>[\d.]+)' Insertion into (?<target>.*)"));
-        public string Json => node.ToJsonString(new() { WriteIndented = true });
-        public PullRequestStatus Status { get; private set; } = Enum.Parse<PullRequestStatus>(node["status"]!.ToString(), ignoreCase: true);
-        public bool IsDraft => (bool)node["isDraft"]!;
-        public string Repo => ParsedTitle.Groups["repo"].Value;
-        public string SourceBranch => ParsedTitle.Groups["source"].Value;
-        public string BuildNumber => ParsedTitle.Groups["build"].Value;
-        public string TargetBranch => node["targetRefName"]!.ToString();
-        public Review[] Reviews { get; } = node["reviewers"]?.AsArray().Select(x => new Review(x!)).ToArray() ?? Array.Empty<Review>();
-        public RpsSummary? RpsSummary { get; private set; }
-
-        public async Task AbandonAsync()
-        {
-            Abandoning = true;
-            try
-            {
-                var response = await page.client.PatchAsJsonAsync(
-                    $"https://dev.azure.com/devdiv/devdiv/_apis/git/repositories/a290117c-5a8a-40f7-bc2c-f14dbe3acf6d/pullrequests/{PullRequestId}?api-version=7.0",
-                    new { status = "abandoned" });
-                Console.WriteLine(response);
-                Console.WriteLine(await response.Content.ReadAsStringAsync());
-
-                if (response.IsSuccessStatusCode)
-                {
-                    Status = PullRequestStatus.Abandoned;
-                }
-            }
-            finally
-            {
-                Abandoning = false;
-            }
-        }
-
-        public void RefreshRpsSummary()
-        {
-            RpsSummary = new RpsSummary();
-            page.StateHasChanged();
-            LoadRpsSummary(RpsSummary);
-        }
-
-        private async void LoadRpsSummary(RpsSummary rpsSummary)
-        {
-            try
-            {
-                var json = await page.client.GetStringAsync($"https://dev.azure.com/devdiv/devdiv/_apis/git/repositories/a290117c-5a8a-40f7-bc2c-f14dbe3acf6d/pullrequests/{PullRequestId}/threads?api-version=6.0");
-                var node = JsonNode.Parse(json);
-                var threads = node!["value"]!.AsArray();
-                rpsSummary.Ddrit = getRunResults(threads, "We've started **VS64** Perf DDRITs");
-                rpsSummary.Speedometer = getRunResults(threads, "We've started Speedometer");
-                rpsSummary.Loaded = true;
-                page.StateHasChanged();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex);
-                rpsSummary.Loaded = true;
-                page.StateHasChanged();
-            }
-
-            static RpsRun? getRunResults(JsonArray threads, string text)
-            {
-                var latestThread = threads.Where(x => x!["comments"]!.AsArray().Any(x => x!["content"]?.ToString().Contains(text) ?? false)).LastOrDefault();
-                if (latestThread == null)
-                {
-                    return null;
-                }
-
-                var latestComment = latestThread["comments"]!.AsArray().Where(x => x!["author"]!["displayName"]!.ToString() == "VSEng Perf Automation Account").LastOrDefault();
-                if (latestComment == null)
-                {
-                    return new RpsRun(InProgress: true, Regressions: 0, BrokenTests: 0);
-                }
-
-                var latestText = latestComment["content"]!.ToString();
-                if (latestText.Contains("Test Run **PASSED**"))
-                {
-                    return new RpsRun(InProgress: false, Regressions: 0, BrokenTests: 0);
-                }
-
-                return new RpsRun(InProgress: false, Regressions: tryGetCount(latestText, "regression"), BrokenTests: tryGetCount(latestText, "broken test"));
-            }
-
-            static int tryGetCount(string text, string label)
-            {
-                var match = Regex.Match(text, @$"(\d+) {label}");
-                if (!match.Success || !int.TryParse(match.Groups[1].Value, out var result))
-                {
-                    return -1;
-                }
-
-                return result;
-            }
-        }
-    }
-
-    class Review(JsonNode node)
-    {
-        public string DisplayName => node["displayName"]!.ToString();
-        public string ImageUrl => node["imageUrl"]!.ToString();
-        public Vote Vote => (Vote)(int)node["vote"]!;
-    }
-
-    class RpsSummary
-    {
-        public bool Loaded { get; set; }
-        public RpsRun? Ddrit { get; set; }
-        public RpsRun? Speedometer { get; set; }
-    }
-
-    record RpsRun(bool InProgress, int Regressions, int BrokenTests);
 
     static string RpsRunToString(RpsRun? run)
     {
@@ -383,19 +265,6 @@ else
         }
     }
 
-    enum PullRequestStatus
-    {
-        Abandoned,
-        Active,
-        Completed
-    }
-
-    enum StatusFilter
-    {
-        All,
-        Active
-    }
-
     static string StatusToEmoji(PullRequestStatus status) => status switch
     {
         PullRequestStatus.Abandoned => "🔴", // red circle
@@ -409,15 +278,6 @@ else
         true => "🔘", // white circle
         false => "⚫", // black circle
     };
-
-    enum Vote
-    {
-        Approved = 10,
-        ApprovedWithSuggestions = 5,
-        NoVote = 0,
-        WaitingForAuthor = -5,
-        Rejected = -10,
-    }
 
     static string VoteToColor(Vote vote) => vote switch
     {
