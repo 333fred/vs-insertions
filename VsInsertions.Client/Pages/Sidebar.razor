@@ -1,0 +1,57 @@
+@inject RepoStateManager manager
+@inject IJSRuntime JSRuntime
+@rendermode RenderMode.InteractiveAuto
+
+<MudNavMenu Bordered="true">
+    <MudDrawerHeader>
+        <MudText Typo="Typo.h6">VS Insertions</MudText>
+    </MudDrawerHeader>
+    <MudNavLink Match="NavLinkMatch.Prefix" Typo="Typo.button" OnClick="@(() => OnRepoChanged("Roslyn"))">Roslyn</MudNavLink>
+    <MudNavLink Typo="Typo.button" OnClick="@(() => OnRepoChanged("Razor"))">Razor</MudNavLink>
+    <MudDivider />
+        <MudText Typo="Typo.body1">Branches</MudText>
+
+        <select class="form-select d-inline-block w-auto me-3" @bind="Branch">
+            @foreach (var branch in branches)
+            {
+                <option>@branch.VsBranch (Roslyn: @branch.GitHubBranch)</option>
+            }
+        </select>
+</MudNavMenu>
+@code {
+    private ImmutableArray<BranchInformation> branches = ImmutableArray<BranchInformation>.Empty;
+    private string? selectedBranch = null!;
+
+    [Parameter]
+    public string Repo { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback<string> RepoChanged { get; set; }
+
+    [Parameter]
+    public string Branch { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback<string> BranchChanged { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // TODO: Do this better, with callbacks from setting the cookie and such. This might need to be somewhat complex to get the cookie to the webasm client?
+            manager.SetCookie(await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "cookie"));
+
+            var roslynInfo = await manager.GetRoslynInformationAsync();
+            if (roslynInfo is not null)
+                branches = roslynInfo.Branches;
+
+            StateHasChanged();
+        }
+    }
+
+    private void OnRepoChanged(string repo)
+    {
+        Repo = repo;
+        RepoChanged.InvokeAsync(repo);
+    }
+}

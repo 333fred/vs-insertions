@@ -1,0 +1,56 @@
+@page "/insertionstatus"
+@using VsInsertions.Client.Pages
+@inherits LayoutComponentBase
+@inject IJSRuntime JSRuntime
+@inject RepoStateManager manager
+@rendermode RenderMode.InteractiveAuto
+
+<MudThemeProvider/>
+<MudDialogProvider/>
+<MudSnackbarProvider/>
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="ToggleDrawer" />
+        <MudSpacer />
+        <MudIconButton Icon="@Icons.Custom.Brands.GitHub" Color="Color.Inherit" Href="https://github.com/jjonescz/vs-insertions" Target="_blank" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="@open" Elevation="1">
+        <Sidebar @bind-Repo="selectedRepo" @bind-Branch="selectedBranch" />
+    </MudDrawer>
+    <MudMainContent>
+        <RepoStatus @bind-SelectedRepo="selectedRepo" @bind-SelectedVsBranch="selectedBranch" />
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+@code{
+    bool open = true;
+
+    string selectedRepo = "Roslyn";
+    string selectedBranch = "main";
+
+    // TODO: This isn't getting called and I have no idea why
+    void ToggleDrawer()
+    {
+        Console.WriteLine("ToggleDrawer");
+        open = !open;
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // TODO: Do this better, with callbacks from setting the cookie and such. This might need to be somewhat complex to get the cookie to the webasm client?
+            manager.SetCookie(await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "cookie"));
+            StateHasChanged();
+        }
+    }
+}

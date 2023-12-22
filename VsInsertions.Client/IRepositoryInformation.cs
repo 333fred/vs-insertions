@@ -8,4 +8,4 @@ public interface IRepositoryInformation
     ImmutableArray<BranchInformation> Branches { get; }
 }
 
-public record struct BranchInformation(string GitHubBranch, string VsBranch);
+public record class BranchInformation(string GitHubBranch, string VsBranch);

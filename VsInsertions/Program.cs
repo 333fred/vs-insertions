@@ -1,4 +1,5 @@
 using MudBlazor.Services;
+using VsInsertions;
 using VsInsertions.Client.Pages;
 using VsInsertions.Components;
 
@@ -11,6 +12,8 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddMudServices();
 builder.Services.AddHttpClient();
+
+builder.Services.AddScoped<RepoStateManager>();
 
 var app = builder.Build();
 

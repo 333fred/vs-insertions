@@ -1,23 +1,16 @@
-@inject HttpClient httpClient
+@inject RepoStateManager repoStateManager
 
 <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge">
-    <MudChipSet @bind-SelectedChip="selectedVsBranch" Filter="true" Mandatory="true">
-        @foreach (var item in info?.Branches ?? ImmutableArray<BranchInformation>.Empty)
-        {
-            <MudChip Label="true" Text="@(item.VsBranch)" />
-        }
-    </MudChipSet>
-
-    @if (selectedVsBranch != null)
+    @if (SelectedVsBranch != null)
     {
         <MudCard>
             <MudCardHeader>
                 <CardHeaderContent>
-                    <MudText Typo="Typo.h6">Last Insertion Status: @selectedVsBranch.Text</MudText>
+                    <MudText Typo="Typo.h6">Last Insertion Status: @SelectedVsBranch</MudText>
                 </CardHeaderContent>
             </MudCardHeader>
             <MudCardContent>
-                @if (!lastInsertionDetails.TryGetValue(selectedVsBranch.Text, out var details))
+                @if (!lastInsertionDetails.TryGetValue(SelectedVsBranch, out var details))
                 {
                     <MudText Typo="Typo.body1">Loading...</MudText>
                 }
@@ -31,7 +24,7 @@
             </MudCardContent>
         </MudCard>
 
-        @if (vsInsertionsByBranch.TryGetValue(selectedVsBranch.Text, out var insertions))
+        @if (vsInsertionsByBranch.TryGetValue(SelectedVsBranch, out var insertions))
         {
             @foreach (var insertion in insertions)
             {
@@ -54,10 +47,16 @@
 </MudContainer>
 
 @code {
-    [Parameter] public string VsCookie { get; set; } = string.Empty;
-    RoslynInformation? info = null;
+    [Parameter]
+    public string? SelectedVsBranch { get; set; }
 
-    MudChip? selectedVsBranch = null;
+    [Parameter]
+    public EventCallback<string?> SelectedVsBranchChanged { get; set; }
+
+    [Parameter]
+    public string? SelectedRepo { get; set; }
+    [Parameter]
+    public EventCallback<string?> SelectedRepoChanged { get; set; }
 
     readonly Dictionary<string, CommitDetails> lastInsertionDetails = new();
     readonly Dictionary<string, ImmutableArray<VsInsertion>> vsInsertionsByBranch = new();
@@ -65,22 +64,17 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         var stateChanged = false;
-        if (firstRender)
+
+        if (SelectedVsBranch != null && !lastInsertionDetails.ContainsKey(SelectedVsBranch))
         {
-            info = await RoslynInformation.CreateAsync(httpClient);
+            await LoadLastInsertionDetailsAsync(SelectedVsBranch);
             stateChanged = true;
         }
 
-        if (selectedVsBranch != null && !lastInsertionDetails.ContainsKey(selectedVsBranch.Text))
+        if (SelectedVsBranch != null && !vsInsertionsByBranch.ContainsKey(SelectedVsBranch))
         {
-            await LoadLastInsertionDetailsAsync(selectedVsBranch.Text);
-            stateChanged = true;
-        }
-
-        if (selectedVsBranch != null && !vsInsertionsByBranch.ContainsKey(selectedVsBranch.Text))
-        {
-            var vsInsertions = await httpClient.GetInsertionsAsync(selectedVsBranch.Text, StatusFilter.Active, 0, "Roslyn");
-            vsInsertionsByBranch.Add(selectedVsBranch.Text, vsInsertions);
+            var vsInsertions = await repoStateManager.GetInsertionsAsync(SelectedVsBranch, StatusFilter.Active, 0, "Roslyn");
+            vsInsertionsByBranch.Add(SelectedVsBranch, vsInsertions);
             stateChanged = true;
         }
 
@@ -88,16 +82,9 @@
             StateHasChanged();
     }
 
-    protected override Task OnParametersSetAsync()
-    {
-        if (VsCookie != null)
-            httpClient.DefaultRequestHeaders.Add("Cookie", VsCookie);
-        return Task.CompletedTask;
-    }
-
     private async Task LoadLastInsertionDetailsAsync(string vsBranch)
     {
-        var lastInsertionDetails = await httpClient.GetLastDetailsForRepo("Roslyn", vsBranch);
+        var lastInsertionDetails = await repoStateManager.GetLastDetailsForRepo("Roslyn", vsBranch);
         if (lastInsertionDetails is { } details)
             this.lastInsertionDetails.Add(vsBranch, details);
         else
